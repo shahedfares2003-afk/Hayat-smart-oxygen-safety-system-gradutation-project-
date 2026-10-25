@@ -1,0 +1,154 @@
+#include "thingProperties.h"
+#include <DHT.h>
+
+#define DHTPIN 4
+#define DHTTYPE DHT22
+
+#define MQ5_PIN 34
+#define MQ9_PIN 35
+
+#define BUZZER_PIN 13
+#define LED_PIN 25
+
+#define RELAY1_PIN 27
+#define RELAY2_PIN 26
+
+#define GAS_LIMIT 60
+#define TEMP_LIMIT 35
+
+DHT dht(DHTPIN, DHTTYPE);
+
+unsigned long startupTime = 0;
+unsigned long lastBuzz = 0;
+
+bool buzzerState = false;
+
+void setup() {
+
+  Serial.begin(115200);
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
+
+  pinMode(RELAY1_PIN, OUTPUT);
+  pinMode(RELAY2_PIN, OUTPUT);
+
+  // Relay Active LOW
+  digitalWrite(RELAY1_PIN, HIGH);
+  digitalWrite(RELAY2_PIN, HIGH);
+
+  digitalWrite(LED_PIN, LOW);
+
+  // البازر مطفي
+  digitalWrite(BUZZER_PIN, HIGH);
+
+  dht.begin();
+
+  initProperties();
+
+  ArduinoCloud.begin(ArduinoIoTPreferredConnection);
+
+  setDebugMessageLevel(2);
+  ArduinoCloud.printDebugInfo();
+
+  startupTime = millis();
+
+  Serial.println("System Started");
+}
+
+void loop() {
+
+  ArduinoCloud.update();
+
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+
+  if (!isnan(h)) 
+    humidity = h; 
+
+  if (!isnan(t))
+    temperature = t;
+
+  int mq5Raw = analogRead(MQ5_PIN);
+  int mq9Raw = analogRead(MQ9_PIN);
+
+  mq5Percent = map(mq5Raw, 0, 4095, 0, 100); 
+  mq9Percent = map(mq9Raw, 0, 4095, 0, 100); 
+
+  mq5Percent = constrain(mq5Percent, 0, 100);
+  mq9Percent = constrain(mq9Percent, 0, 100);
+
+  bool tempDanger = (temperature > TEMP_LIMIT);
+
+  if (millis() - startupTime < 60000) {
+    mq5Danger = false;
+    mq9Danger = false;
+  }
+  else {
+    mq5Danger = (mq5Percent > GAS_LIMIT);
+    mq9Danger = (mq9Percent > GAS_LIMIT);
+  }
+
+  systemDanger = tempDanger || mq5Danger || mq9Danger;
+
+  // LED التحذير
+  warningLed = systemDanger;
+  digitalWrite(LED_PIN, systemDanger);
+
+  // تشغيل المروحة تلقائياً عند الخطر
+  bool autoFan = systemDanger;
+
+  if (relay2Control || autoFan) {
+    digitalWrite(RELAY2_PIN, LOW);
+  } else {
+    digitalWrite(RELAY2_PIN, HIGH);
+  }
+
+  // البازر Active LOW
+  if (systemDanger) {
+
+    if (millis() - lastBuzz >= 500) {
+      lastBuzz = millis();
+      buzzerState = !buzzerState;
+
+      if (buzzerState)
+        digitalWrite(BUZZER_PIN, LOW);
+      else
+        digitalWrite(BUZZER_PIN, HIGH);
+    }
+
+    buzzerStatus = true;
+
+  } else {
+
+    digitalWrite(BUZZER_PIN, HIGH);
+
+    buzzerState = false;
+    buzzerStatus = false;
+  }
+
+  Serial.print("Temp: ");
+  Serial.print(temperature);
+  Serial.print(" C  | Humidity: ");
+  Serial.print(humidity);
+  Serial.print("% | MQ5: ");
+  Serial.print(mq5Percent);
+  Serial.print("% | MQ9: ");
+  Serial.print(mq9Percent);
+  Serial.print("% | Danger: ");
+  Serial.println(systemDanger);
+
+  delay(200);
+}
+
+void onRelay1ControlChange() {
+
+  if (relay1Control)
+    digitalWrite(RELAY1_PIN, LOW);
+  else
+    digitalWrite(RELAY1_PIN, HIGH);
+}
+
+void onRelay2ControlChange() {
+  // التحكم التلقائي داخل loop
+}
